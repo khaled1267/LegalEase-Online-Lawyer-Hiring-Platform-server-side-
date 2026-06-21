@@ -35,6 +35,7 @@ async function run() {
     const lawyersCollection = db.collection("lawyers");
     const hiringsCollection = db.collection("hirings");
     const paymentsCollection = db.collection("payments");
+    const bookingcollection =db.collection("bookings");
     const commentsCollection = db.collection("comments");
     const servicesCollection = db.collection("services");
 
@@ -412,6 +413,65 @@ app.get("/admin-analytics", async (req, res) => {
     res.status(500).send({ message: "Failed to fetch analytics" });
   }
 });
+
+// 🌟 [HOME PAGE] র‍্যান্ডম ৬ জন Featured Lawyer গেট করার API
+app.get("/featured-lawyers", async (req, res) => {
+  try {
+    // $sample size: 6 দিলে মঙ্গোডিবি প্রতিবার র‍্যান্ডম ৬টি ডাটা তুলে আনবে
+    const result = await servicesCollection.aggregate([{ $sample: { size: 6 } }]).toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to fetch featured lawyers", error });
+  }
+});
+
+// POST /api/bookings
+app.post('/api/bookings', async (req, res) => {
+  try {
+    const {
+      amount, email: attendeeEmail,
+      eventId, eventTitle,
+      quantity, transactionId,
+    } = req.body
+
+    const qty = parseInt(quantity)
+
+    // ── 1. Deduct seats atomically ─────────────────────────────
+    await paymentsCollection.updateOne(
+      { _id: new ObjectId(eventId) },
+      { $inc: { availableSeats: -qty } }
+    )
+
+    // ── 2. Insert booking document ─────────────────────────────
+    const booking = {
+      eventId,
+      eventTitle,
+      attendeeEmail,
+      quantity:      qty,
+      amount:        parseFloat(amount),
+      transactionId,
+      paymentStatus: 'paid',
+      bookingDate:   new Date(),
+    }
+    const result = await bookingcollection.insertOne(booking)
+
+    // ── 3. Log payment separately ──────────────────────────────
+    await paymentsCollection.insertOne({
+      userEmail:     attendeeEmail,
+      amount:        parseFloat(amount),
+      transactionId,
+      paymentStatus: 'paid',
+      paidAt:        new Date(),
+    })
+
+    res.json({ success: true, booking: { _id: result.insertedId, ...booking } })
+
+  } catch (error) {
+    console.error(error)
+    res.status(500).json({ message: error.message })
+  }
+})
+
 
 
 
