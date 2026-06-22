@@ -1,10 +1,11 @@
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config(); 
+require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+const stripe = require("stripe")("sk_test_BQokikJOvBiI2HlWgH4olfQ2"); // আপনার Secret Key
 
 // Middleware
 app.use(cors());
@@ -32,10 +33,9 @@ async function run() {
     // Collections
     const db = client.db("legalease");
     const usersCollection = db.collection("user");
-    const lawyersCollection = db.collection("lawyers");
+    const lawyersCollection = client.db("legalease").collection("services");
     const hiringsCollection = db.collection("hirings");
-    const paymentsCollection = db.collection("payments");
-    const bookingcollection =db.collection("bookings");
+    const paymentsCollection = db.collection("payments"); // অথবা "hirings" আপনার কালেকশনের নাম অনুযায়ী    const bookingcollection =db.collection("bookings");
     const commentsCollection = db.collection("comments");
     const servicesCollection = db.collection("services");
 
@@ -93,7 +93,10 @@ async function run() {
 
         res.send(result);
       } catch (error) {
-        res.status(500).send({ message: "Failed to fetch lawyer details", error: error.message });
+        res.status(500).send({
+          message: "Failed to fetch lawyer details",
+          error: error.message,
+        });
       }
     });
 
@@ -140,7 +143,10 @@ async function run() {
         const { fullName, profilePicture } = req.body;
 
         if (!email) {
-          return res.status(400).send({ success: false, message: "Email query parameter is required" });
+          return res.status(400).send({
+            success: false,
+            message: "Email query parameter is required",
+          });
         }
 
         const filter = { email: email };
@@ -152,12 +158,22 @@ async function run() {
         const result = await usersCollection.updateOne(filter, updateDoc);
 
         if (result.matchedCount === 0) {
-          return res.status(404).send({ success: false, message: "User not found" });
+          return res
+            .status(404)
+            .send({ success: false, message: "User not found" });
         }
 
-        res.send({ success: true, message: "Profile updated successfully!", result });
+        res.send({
+          success: true,
+          message: "Profile updated successfully!",
+          result,
+        });
       } catch (error) {
-        res.status(500).send({ success: false, message: "Failed to update profile", error: error.message });
+        res.status(500).send({
+          success: false,
+          message: "Failed to update profile",
+          error: error.message,
+        });
       }
     });
 
@@ -165,13 +181,15 @@ async function run() {
     // 👤 LAWYER PROFILE MANAGEMENT API
     // ==========================================
 
-    app.put('/lawyers', async (req, res) => {
+    app.put("/lawyers", async (req, res) => {
       try {
-        const email = req.query.email; 
-        const lawyerData = req.body; 
+        const email = req.query.email;
+        const lawyerData = req.body;
 
         if (!email) {
-          return res.status(400).send({ success: false, message: "Lawyer email is required" });
+          return res
+            .status(400)
+            .send({ success: false, message: "Lawyer email is required" });
         }
 
         const filter = { email: email };
@@ -179,31 +197,109 @@ async function run() {
           $set: {
             name: lawyerData.name,
             specialization: lawyerData.specialization,
-            fee: parseInt(lawyerData.fee), 
+            fee: parseInt(lawyerData.fee),
             bio: lawyerData.bio,
-            image: lawyerData.image, 
-            email: email, 
-            updatedAt: new Date()
-          }
+            image: lawyerData.image,
+            email: email,
+            updatedAt: new Date(),
+          },
         };
 
-        const result = await lawyersCollection.updateOne(filter, updateDoc, { upsert: true });
-        res.send({ success: true, message: "Lawyer profile saved successfully!", result });
+        const result = await lawyersCollection.updateOne(filter, updateDoc, {
+          upsert: true,
+        });
+        res.send({
+          success: true,
+          message: "Lawyer profile saved successfully!",
+          result,
+        });
       } catch (error) {
-        res.status(500).send({ success: false, message: "Failed to save lawyer profile", error });
+        res.status(500).send({
+          success: false,
+          message: "Failed to save lawyer profile",
+          error,
+        });
       }
     });
 
-    // 📋 ব্রাউজ পেজে সব সার্ভিস/লইয়ার একসাথে দেখানোর API (Fix করা হয়েছে যেন services কালেকশন থেকে ডাটা নেয়)
-    app.get('/lawyers', async (req, res) => {
+    // ==========================================
+    // 👤 LAWYER PROFILE MANAGEMENT API
+    // ==========================================
+
+    // ১. 📥 POST API: নতুন লয়ার ডাটাবেজে ইনসার্ট করার জন্য
+    app.post("/lawyers", async (req, res) => {
       try {
-        const result = await servicesCollection.find({}).toArray(); // এখানে lawyers-এর বদলে servicesCollection দেওয়া হয়েছে যাতে মেইন কার্ড শো করে।
-        res.send({ success: true, data: result });
+        const lawyerData = req.body;
+
+        // ইমেইল ঠিকঠাক পাঠানো হয়েছে কিনা চেক
+        if (!lawyerData.email) {
+          return res
+            .status(400)
+            .send({ success: false, message: "Lawyer email is required" });
+        }
+
+        // ডাটাবেজে সেভ করার জন্য অবজেক্ট তৈরি
+        const newLawyer = {
+          name: lawyerData.name,
+          specialization: lawyerData.specialization,
+          fee: parseInt(lawyerData.fee) || 0, // স্ট্রিং আসলে নাম্বারে কনভার্ট হবে
+          bio: lawyerData.bio,
+          image: lawyerData.image,
+          email: lawyerData.email,
+          createdAt: new Date(),
+        };
+
+        // সরাসরি ডাটাবেজে নতুন ডকুমেন্ট ইনসার্ট করা
+        const result = await lawyersCollection.insertOne(newLawyer);
+        res.status(201).send({
+          success: true,
+          message: "Lawyer profile created successfully!",
+          result,
+        });
       } catch (error) {
-        res.status(500).send({ success: false, message: "Failed to fetch lawyers", error });
+        console.error("POST Error:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to insert lawyer profile",
+          error: error.message,
+        });
       }
     });
 
+app.get('/lawyers', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const search = req.query.search || "";
+    
+    // 🌟 এখানে ৩ দেওয়া হয়েছে যাতে ৮ জন লইয়ার ৩টি ভিন্ন পেজে ভাগ হয়ে যায়
+    const limit = 8; 
+    const skip = (page - 1) * limit;
+
+    let query = {};
+
+    // সার্চ লজিক
+    if (search.trim() !== "") {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { specialization: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    // ডাটা কাউন্ট ও ফেচ
+    const total = await lawyersCollection.countDocuments(query);
+    const result = await lawyersCollection.find(query).skip(skip).limit(limit).toArray();
+
+    res.send({ 
+      success: true, 
+      lawyers: result, 
+      total: total 
+    });
+
+  } catch (error) {
+    console.error("Backend error on /lawyers:", error);
+    res.status(500).send({ success: false, lawyers: [], total: 0 });
+  }
+});
     // ==========================================
     // 🤝 LAWYER HIRING & REQUESTS MANAGEMENT API (ফাংশন স্কোপের ভেতরে আনা হয়েছে)
     // ==========================================
@@ -215,55 +311,68 @@ async function run() {
         const result = await hiringsCollection.insertOne(hiringRequest);
         res.status(201).send(result);
       } catch (error) {
-        res.status(500).send({ message: "Failed to send hiring request", error });
+        res
+          .status(500)
+          .send({ message: "Failed to send hiring request", error });
       }
     });
 
     // ২. [READ] নির্দিষ্ট লইয়ারের ইমেইল অনুযায়ী তার কাছে আসা সব রিকোয়েস্ট গেট করার API
     // ২. লইয়ারের কাছে আসা সব রিকোয়েস্ট গেট করার API (টেস্টিং ফ্রেন্ডলি)
-app.get("/hirings/lawyer", async (req, res) => {
-  try {
-    const email = req.query.email;
-    const all = req.query.all;
-    
-    let query = {};
-    
-    // যদি নির্দিষ্ট ইমেইল থাকে তবে সেটা দিয়ে খুঁজবে, না থাকলে সব ডেটা দেবে
-    if (email && !all) {
-      query = { lawyerEmail: email };
-    }
-    
-    const result = await hiringsCollection.find(query).sort({ _id: -1 }).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch hiring requests", error });
-  }
-});
+    app.get("/hirings/lawyer", async (req, res) => {
+      try {
+        const email = req.query.email;
+        const all = req.query.all;
 
+        let query = {};
 
-// ক্লায়েন্ট ইমেইল অনুযায়ী তার পাঠানো সব রিকোয়েস্ট গেট করার API
-app.get("/hirings", async (req, res) => {
-  try {
-    const email = req.query.email;
-    if (!email) {
-      return res.status(400).send({ message: "Email query parameter is required" });
-    }
-    
-    // কুয়েরি অবজেক্টে clientEmail ফিল্ড সেট করা হলো
-    const query = { clientEmail: email };
-    const result = await hiringsCollection.find(query).sort({ _id: -1 }).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch user history", error });
-  }
-});
+        // যদি নির্দিষ্ট ইমেইল থাকে তবে সেটা দিয়ে খুঁজবে, না থাকলে সব ডেটা দেবে
+        if (email && !all) {
+          query = { lawyerEmail: email };
+        }
+
+        const result = await hiringsCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ message: "Failed to fetch hiring requests", error });
+      }
+    });
+
+    // ক্লায়েন্ট ইমেইল অনুযায়ী তার পাঠানো সব রিকোয়েস্ট গেট করার API
+    app.get("/hirings", async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email) {
+          return res
+            .status(400)
+            .send({ message: "Email query parameter is required" });
+        }
+
+        // কুয়েরি অবজেক্টে clientEmail ফিল্ড সেট করা হলো
+        const query = { clientEmail: email };
+        const result = await hiringsCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ message: "Failed to fetch user history", error });
+      }
+    });
 
     // ৩. [UPDATE] লইয়ার রিকোয়েস্ট Accept বা Reject করলে স্ট্যাটাস আপডেট করার API
     app.patch("/hirings/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const { status } = req.body; 
-        
+        const { status } = req.body;
+
         if (!ObjectId.isValid(id)) {
           return res.status(400).send({ message: "Invalid Request ID format" });
         }
@@ -280,211 +389,257 @@ app.get("/hirings", async (req, res) => {
       }
     });
 
-
-
-
     // ১. নির্দিষ্ট ইউজারের সব কমেন্ট গেট (GET) করা
-// ==========================================
-// 💬 COMMENTS MANAGEMENT API
-// ==========================================
+    // ==========================================
+    // 💬 COMMENTS MANAGEMENT API
+    // ==========================================
 
-// ➕ [নতুন সংযোজন ১] কমেন্ট পোস্ট করার মেইন API (POST)
-app.post("/comments", async (req, res) => {
-  try {
-    const commentData = req.body;
-    const result = await commentsCollection.insertOne(commentData);
-    res.status(201).send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to post comment", error });
-  }
-});
+    // ➕ [নতুন সংযোজন ১] কমেন্ট পোস্ট করার মেইন API (POST)
+    app.post("/comments", async (req, res) => {
+      try {
+        const commentData = req.body;
+        const result = await commentsCollection.insertOne(commentData);
+        res.status(201).send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to post comment", error });
+      }
+    });
 
-// 📋 [নতুন সংযোজন ২] নির্দিষ্ট লইয়ারের ID অনুযায়ী সব কমেন্ট গেট করার API (GET)
-app.get("/comments", async (req, res) => {
-  try {
-    const lawyerId = req.query.lawyerId;
-    let query = {};
-    if (lawyerId) {
-      query = { lawyerId: lawyerId };
-    }
-    const result = await commentsCollection.find(query).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch comments", error });
-  }
-});
+    // 📋 [নতুন সংযোজন ২] নির্দিষ্ট লইয়ারের ID অনুযায়ী সব কমেন্ট গেট করার API (GET)
+    app.get("/comments", async (req, res) => {
+      try {
+        const lawyerId = req.query.lawyerId;
+        let query = {};
+        if (lawyerId) {
+          query = { lawyerId: lawyerId };
+        }
+        const result = await commentsCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch comments", error });
+      }
+    });
 
-// ৩. নির্দিষ্ট ইউজারের সব কমেন্ট গেট (GET) করা (আপনার অলরেডি আছে)
-app.get("/comments/user/:email", async (req, res) => {
-  const email = req.params.email;
-  const query = { userEmail: email };
-  const result = await commentsCollection.find(query).toArray();
-  res.send(result);
-});
+    // ৩. নির্দিষ্ট ইউজারের সব কমেন্ট গেট (GET) করা (আপনার অলরেডি আছে)
+    app.get("/comments/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const query = { userEmail: email };
+      const result = await commentsCollection.find(query).toArray();
+      res.send(result);
+    });
 
-// ৪. কমেন্ট আপডেট (PATCH/PUT) করা (আপনার অলরেডি আছে)
-app.patch("/comments/:id", async (req, res) => {
-  const id = req.params.id;
-  const filter = { _id: new ObjectId(id) };
-  const updatedComment = req.body;
-  const updateDoc = {
-    $set: {
-      commentText: updatedComment.commentText,
-      date: updatedComment.date 
-    },
-  };
-  const result = await commentsCollection.updateOne(filter, updateDoc);
-  res.send(result);
-});
+    // ৪. কমেন্ট আপডেট (PATCH/PUT) করা (আপনার অলরেডি আছে)
+    app.patch("/comments/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updatedComment = req.body;
+      const updateDoc = {
+        $set: {
+          commentText: updatedComment.commentText,
+          date: updatedComment.date,
+        },
+      };
+      const result = await commentsCollection.updateOne(filter, updateDoc);
+      res.send(result);
+    });
 
-// ৫. কমেন্ট ডিলিট (DELETE) করা (আপনার অলরেডি আছে)
-app.delete("/comments/:id", async (req, res) => {
-  const id = req.params.id;
-  const query = { _id: new ObjectId(id) };
-  const result = await commentsCollection.deleteOne(query);
-  res.send(result);
-});
+    // ৫. কমেন্ট ডিলিট (DELETE) করা (আপনার অলরেডি আছে)
+    app.delete("/comments/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await commentsCollection.deleteOne(query);
+      res.send(result);
+    });
 
+    // ==========================================
+    // 👑 ADMIN MANAGEMENT API
+    // ==========================================
 
+    // ১. সব ইউজার গেট করা (Manage Users-এর জন্য)
+    app.get("/users", async (req, res) => {
+      try {
+        const result = await usersCollection.find({}).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch users" });
+      }
+    });
 
-// ==========================================
-// 👑 ADMIN MANAGEMENT API
-// ==========================================
+    // ২. ইউজারের রোল পরিবর্তন করা (Make Admin/Lawyer/User)
+    app.patch("/users/role/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { role } = req.body;
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = { $set: { role: role } };
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to update role" });
+      }
+    });
 
-// ১. সব ইউজার গেট করা (Manage Users-এর জন্য)
-app.get("/users", async (req, res) => {
-  try {
-    const result = await usersCollection.find({}).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch users" });
-  }
-});
+    // ৩. ইউজার ডিলিট করা
+    app.delete("/users/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const filter = { _id: new ObjectId(id) };
+        const result = await usersCollection.deleteOne(filter);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to delete user" });
+      }
+    });
 
-// ২. ইউজারের রোল পরিবর্তন করা (Make Admin/Lawyer/User)
-app.patch("/users/role/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { role } = req.body;
-    const filter = { _id: new ObjectId(id) };
-    const updateDoc = { $set: { role: role } };
-    const result = await usersCollection.updateOne(filter, updateDoc);
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to update role" });
-  }
-});
+    // ৪. সব ট্রানজেকশন গেট করা
+    app.get("/all-transactions", async (req, res) => {
+      try {
+        const result = await paymentsCollection
+          .find({})
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch transactions" });
+      }
+    });
 
-// ৩. ইউজার ডিলিট করা
-app.delete("/users/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const filter = { _id: new ObjectId(id) };
-    const result = await usersCollection.deleteOne(filter);
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to delete user" });
-  }
-});
+    // ৫. অ্যানালিটিক্স ডাটা কাউন্ট করা (Dashboard Analytics)
+    app.get("/admin-analytics", async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments({
+          role: "user",
+        });
+        const totalLawyers = await usersCollection.countDocuments({
+          role: "lawyer",
+        }); // অথবা lawyersCollection
+        const totalHires = await hiringsCollection.countDocuments({});
 
-// ৪. সব ট্রানজেকশন গেট করা
-app.get("/all-transactions", async (req, res) => {
-  try {
-    const result = await paymentsCollection.find({}).sort({ _id: -1 }).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch transactions" });
-  }
-});
+        // টোটাল রেভিনিউ হিসাব করা (paymentsCollection থেকে amount সাম করা)
+        const payments = await paymentsCollection.find({}).toArray();
+        const totalRevenue = payments.reduce(
+          (sum, payment) => sum + Number(payment.amount || 0),
+          0,
+        );
 
-// ৫. অ্যানালিটিক্স ডাটা কাউন্ট করা (Dashboard Analytics)
-app.get("/admin-analytics", async (req, res) => {
-  try {
-    const totalUsers = await usersCollection.countDocuments({ role: "user" });
-    const totalLawyers = await usersCollection.countDocuments({ role: "lawyer" }); // অথবা lawyersCollection
-    const totalHires = await hiringsCollection.countDocuments({});
-    
-    // টোটাল রেভিনিউ হিসাব করা (paymentsCollection থেকে amount সাম করা)
-    const payments = await paymentsCollection.find({}).toArray();
-    const totalRevenue = payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+        res.send({ totalUsers, totalLawyers, totalHires, totalRevenue });
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch analytics" });
+      }
+    });
 
-    res.send({ totalUsers, totalLawyers, totalHires, totalRevenue });
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch analytics" });
-  }
-});
+    // 🌟 [HOME PAGE] র‍্যান্ডম ৬ জন Featured Lawyer গেট করার API
+    app.get("/featured-lawyers", async (req, res) => {
+      try {
+        // $sample size: 6 দিলে মঙ্গোডিবি প্রতিবার র‍্যান্ডম ৬টি ডাটা তুলে আনবে
+        const result = await servicesCollection
+          .aggregate([{ $sample: { size: 6 } }])
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res
+          .status(500)
+          .send({ message: "Failed to fetch featured lawyers", error });
+      }
+    });
 
-// 🌟 [HOME PAGE] র‍্যান্ডম ৬ জন Featured Lawyer গেট করার API
-app.get("/featured-lawyers", async (req, res) => {
-  try {
-    // $sample size: 6 দিলে মঙ্গোডিবি প্রতিবার র‍্যান্ডম ৬টি ডাটা তুলে আনবে
-    const result = await servicesCollection.aggregate([{ $sample: { size: 6 } }]).toArray();
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to fetch featured lawyers", error });
-  }
-});
+    // 💳 Stripe Hosted Checkout Session API
+    app.post("/api/checkout_sessions", async (req, res) => {
+      try {
+        const { eventId, eventTitle, totalTicketPrice, email } = req.body;
 
-// POST /api/bookings
-app.post('/api/bookings', async (req, res) => {
-  try {
-    const {
-      amount, email: attendeeEmail,
-      eventId, eventTitle,
-      quantity, transactionId,
-    } = req.body
+        // ১. স্ট্রাইপ সেশন প্যারামিটার তৈরি
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          customer_email: email,
+          // lawyerEmail: lawyerEmail,
 
-    const qty = parseInt(quantity)
+          // পেমেন্ট সফল বা ক্যানসেল হলে ইউজার ফ্রন্টএন্ডের যে ইউআরএল-এ ব্যাক করবে
+          success_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history/success?session_id={CHECKOUT_SESSION_ID}&hiringId=${eventId}`,
+          cancel_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history/success?payment_cancel=true`,
 
-    // ── 1. Deduct seats atomically ─────────────────────────────
-    await paymentsCollection.updateOne(
-      { _id: new ObjectId(eventId) },
-      { $inc: { availableSeats: -qty } }
-    )
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                product_data: {
+                  name: eventTitle, // যেমন: Lawyer Name বা Consultation Fee
+                },
+                unit_amount: parseInt(totalTicketPrice * 100), // স্ট্রাইপ সেন্ট হিসেবে হিসাব করে (যেমন: $150 = 15000)
+              },
+              quantity: 1,
+            },
+          ],
+        });
 
-    // ── 2. Insert booking document ─────────────────────────────
-    const booking = {
-      eventId,
-      eventTitle,
-      attendeeEmail,
-      quantity:      qty,
-      amount:        parseFloat(amount),
-      transactionId,
-      paymentStatus: 'paid',
-      bookingDate:   new Date(),
-    }
-    const result = await bookingcollection.insertOne(booking)
+        // ২. ফ্রন্টএন্ডে স্ট্রাইপ পেজের ইউআরএল রিটার্ন করা
+        res.json({ url: session.url });
+      } catch (error) {
+        console.error("Stripe Error:", error);
+        res.status(500).json({ error: error.message });
+      }
+    });
 
-    // ── 3. Log payment separately ──────────────────────────────
-    await paymentsCollection.insertOne({
-      userEmail:     attendeeEmail,
-      amount:        parseFloat(amount),
-      transactionId,
-      paymentStatus: 'paid',
-      paidAt:        new Date(),
-    })
+    app.patch("/api/bookings/update-status", async (req, res) => {
+      try {
+        const {
+          hiringId,
+          paymentStatus,
+          sessionId,
+          clientEmail,
+          amount,
+          lawyerName,
+        } = req.body;
+        const { ObjectId } = require("mongodb");
 
-    res.json({ success: true, booking: { _id: result.insertedId, ...booking } })
+        // ক. মূল বুকিং বা হায়ার রিকোয়েস্টের স্ট্যাটাস 'Paid' করা
+        await hiringsCollection.updateOne(
+          { _id: new ObjectId(hiringId) },
+          { $set: { paymentStatus: paymentStatus } },
+        );
 
-  } catch (error) {
-    console.error(error)
-    res.status(500).json({ message: error.message })
-  }
-})
+        // খ. পেমেন্ট হিস্ট্রি কালেকশনে একটি নতুন রেকর্ড তৈরি করা (যা অ্যাডমিন দেখবে)
+        const paymentRecord = {
+          hiringId: hiringId,
+          sessionId: sessionId,
+          clientEmail: clientEmail,
+          amount: amount,
+          lawyerName: lawyerName,
+          status: "Paid",
+          createdAt: new Date(),
+        };
 
+        await paymentsCollection.insertOne(paymentRecord);
 
+        res.send({
+          success: true,
+          message: "Status updated and payment record saved!",
+        });
+      } catch (error) {
+        console.error("Error updating system:", error);
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+    app.get("/admin/payments", async (req, res) => {
+      try {
+        // ডাটাবেজ থেকে সব পেমেন্ট ডাটা রিড করা (নতুন পেমেন্টগুলো উপরে দেখানোর জন্য sort করা হয়েছে)
+        const allPayments = await paymentsCollection
+          .find({})
+          .sort({ _id: -1 })
+          .toArray();
 
-
-
-
-
-
-
-
-
-
-
-
+        res.send({
+          success: true,
+          payments: allPayments,
+        });
+      } catch (error) {
+        console.error("Admin payments fetch error:", error);
+        res
+          .status(500)
+          .send({ success: false, message: "Internal Server Error" });
+      }
+    });
   } catch (error) {
     console.error("MongoDB Connection Error: ", error);
   }
