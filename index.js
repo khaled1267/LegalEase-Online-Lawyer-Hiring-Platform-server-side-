@@ -46,7 +46,7 @@ const verifyToken = async (req, res, next) => {
   if (!token) {
     return res.status(401).json({ msg: "Unauthorized" });
   }
-  console.log(token);
+  console.log(token,"token 45");
 
   try {
     const { payload } = await jwtVerify(token, JWKS);
