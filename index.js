@@ -57,15 +57,17 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-async function run() {
-  try {
-    // Connect the client to the server
-    await client.connect(); // মঙ্গোডিবি কানেকশন নিশ্চিত করার জন্য আনকমেন্ট করা হলো
+// async function run() {
+//   try {
+//     // Connect the client to the server
+    // await client.connect(); // মঙ্গোডিবি কানেকশন নিশ্চিত করার জন্য আনকমেন্ট করা হলো
 
     // সফলভাবে কানেক্ট হলে এই মেসেজটি দেখাবে
     // console.log("Successfully connected to MongoDB!");
 
-    // Collections
+   client.connect(() => {
+    console.log('connecting to MOngo db');
+}).catch(console.dir);
     const db = client.db("legalease");
     const usersCollection = db.collection("user");
     const lawyersCollection = client.db("legalease").collection("services");
@@ -678,13 +680,13 @@ async function run() {
           .send({ success: false, message: "Internal Server Error" });
       }
     });
-  } catch (error) {
-    console.error("MongoDB Connection Error: ", error);
-  }
-}
+//   } catch (error) {
+//     console.error("MongoDB Connection Error: ", error);
+//   }
+// }
 
 // run() ফাংশন এক্সিকিউট করা
-run().catch(console.dir);
+// run().catch(console.dir);
 
 // Root API Route
 app.get("/", (req, res) => {
