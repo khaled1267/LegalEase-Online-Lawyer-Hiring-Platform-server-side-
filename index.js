@@ -1,7 +1,4 @@
-
 const express = require("express");
-
-
 
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -27,7 +24,9 @@ const client = new MongoClient(uri, {
   },
 });
 
-const JWKS= createRemoteJWKSet(new URL(`${process.env.BETTER_AUTH_URL}/api/auth/jwks`));
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.BETTER_AUTH_URL}/api/auth/jwks`),
+);
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -57,7 +56,6 @@ const verifyToken = async (req, res, next) => {
     return res.status(401).json({ msg: "Unauthorized" });
   }
 };
-
 
 async function run() {
   try {
@@ -303,46 +301,49 @@ async function run() {
       }
     });
 
-app.get('/lawyers', async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const search = req.query.search || "";
-    
-    // 🌟 এখানে ৩ দেওয়া হয়েছে যাতে ৮ জন লইয়ার ৩টি ভিন্ন পেজে ভাগ হয়ে যায়
-    const limit = 8; 
-    const skip = (page - 1) * limit;
+    app.get("/lawyers", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const search = req.query.search || "";
 
-    let query = {};
+        // 🌟 এখানে ৩ দেওয়া হয়েছে যাতে ৮ জন লইয়ার ৩টি ভিন্ন পেজে ভাগ হয়ে যায়
+        const limit = 8;
+        const skip = (page - 1) * limit;
 
-    // সার্চ লজিক
-    if (search.trim() !== "") {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { specialization: { $regex: search, $options: "i" } }
-      ];
-    }
+        let query = {};
 
-    // ডাটা কাউন্ট ও ফেচ
-    const total = await lawyersCollection.countDocuments(query);
-    const result = await lawyersCollection.find(query).skip(skip).limit(limit).toArray();
+        // সার্চ লজিক
+        if (search.trim() !== "") {
+          query.$or = [
+            { name: { $regex: search, $options: "i" } },
+            { specialization: { $regex: search, $options: "i" } },
+          ];
+        }
 
-    res.send({ 
-      success: true, 
-      lawyers: result, 
-      total: total 
+        // ডাটা কাউন্ট ও ফেচ
+        const total = await lawyersCollection.countDocuments(query);
+        const result = await lawyersCollection
+          .find(query)
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        res.send({
+          success: true,
+          lawyers: result,
+          total: total,
+        });
+      } catch (error) {
+        console.error("Backend error on /lawyers:", error);
+        res.status(500).send({ success: false, lawyers: [], total: 0 });
+      }
     });
-
-  } catch (error) {
-    console.error("Backend error on /lawyers:", error);
-    res.status(500).send({ success: false, lawyers: [], total: 0 });
-  }
-});
     // ==========================================
     // 🤝 LAWYER HIRING & REQUESTS MANAGEMENT API (ফাংশন স্কোপের ভেতরে আনা হয়েছে)
     // ==========================================
 
     // ১. [CREATE] ক্লায়েন্ট যখন কোনো লইয়ারকে হায়ার করার রিকোয়েস্ট পাঠাবে
-    app.post("/hirings",verifyToken, async (req, res) => {
+    app.post("/hirings", verifyToken, async (req, res) => {
       try {
         const hiringRequest = req.body;
         const result = await hiringsCollection.insertOne(hiringRequest);
@@ -432,7 +433,7 @@ app.get('/lawyers', async (req, res) => {
     // ==========================================
 
     // ➕ [নতুন সংযোজন ১] কমেন্ট পোস্ট করার মেইন API (POST)
-    app.post("/comments",  async (req, res) => {
+    app.post("/comments", async (req, res) => {
       try {
         const commentData = req.body;
         const result = await commentsCollection.insertOne(commentData);
@@ -694,3 +695,5 @@ app.get("/", (req, res) => {
 app.listen(port, () => {
   console.log(`Server is running on port: ${port}`);
 });
+
+module.exports = app;
