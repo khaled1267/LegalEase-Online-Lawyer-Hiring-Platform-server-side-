@@ -1,6 +1,13 @@
+
+
+
 const express = require("express");
+
+
+
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 require("dotenv").config();
 
 const app = express();
@@ -21,6 +28,38 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+const JWKS= createRemoteJWKSet(new URL(`${process.env.BETTER_AUTH_URL}/api/auth/jwks`));
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  console.log(authHeader);
+
+  if (!authHeader || !authHeader.startsWith("Bearer")) {
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+
+  // ["Bearer", "xjasasdhsagdydsav"]
+
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+  console.log(token);
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+    console.log(payload);
+
+    next();
+  } catch (error) {
+    console.log(error);
+    return res.status(401).json({ msg: "Unauthorized" });
+  }
+};
+
 
 async function run() {
   try {
@@ -305,7 +344,7 @@ app.get('/lawyers', async (req, res) => {
     // ==========================================
 
     // ১. [CREATE] ক্লায়েন্ট যখন কোনো লইয়ারকে হায়ার করার রিকোয়েস্ট পাঠাবে
-    app.post("/hirings", async (req, res) => {
+    app.post("/hirings",verifyToken, async (req, res) => {
       try {
         const hiringRequest = req.body;
         const result = await hiringsCollection.insertOne(hiringRequest);
