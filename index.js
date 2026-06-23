@@ -1,6 +1,4 @@
 
-
-
 const express = require("express");
 
 
@@ -33,7 +31,7 @@ const JWKS= createRemoteJWKSet(new URL(`${process.env.BETTER_AUTH_URL}/api/auth/
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  console.log(authHeader);
+  // console.log(authHeader);
 
   if (!authHeader || !authHeader.startsWith("Bearer")) {
     return res.status(401).json({ msg: "Unauthorized" });
@@ -46,16 +44,16 @@ const verifyToken = async (req, res, next) => {
   if (!token) {
     return res.status(401).json({ msg: "Unauthorized" });
   }
-  console.log(token,"token 45");
+  // console.log(token,"token 45");
 
   try {
     const { payload } = await jwtVerify(token, JWKS);
     req.user = payload;
-    console.log(payload);
+    // console.log(payload);
 
     next();
   } catch (error) {
-    console.log(error);
+    // console.log(error);
     return res.status(401).json({ msg: "Unauthorized" });
   }
 };
@@ -67,7 +65,7 @@ async function run() {
     await client.connect(); // মঙ্গোডিবি কানেকশন নিশ্চিত করার জন্য আনকমেন্ট করা হলো
 
     // সফলভাবে কানেক্ট হলে এই মেসেজটি দেখাবে
-    console.log("Successfully connected to MongoDB!");
+    // console.log("Successfully connected to MongoDB!");
 
     // Collections
     const db = client.db("legalease");
@@ -434,7 +432,7 @@ app.get('/lawyers', async (req, res) => {
     // ==========================================
 
     // ➕ [নতুন সংযোজন ১] কমেন্ট পোস্ট করার মেইন API (POST)
-    app.post("/comments", async (req, res) => {
+    app.post("/comments",  async (req, res) => {
       try {
         const commentData = req.body;
         const result = await commentsCollection.insertOne(commentData);
