@@ -1,3 +1,6 @@
+const dns = require("node:dns");
+dns.setServers(["1.1.1.1", "1.0.0.1"]);
+
 const express = require("express");
 
 const cors = require("cors");
@@ -30,29 +33,41 @@ const JWKS = createRemoteJWKSet(
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  // console.log(authHeader);
+  
+  console.log("\n--- [Auth Middleware] Incoming Request ---");
+  console.log(`Method: ${req.method} | URL: ${req.originalUrl}`);
+  console.log(`Authorization Header: ${authHeader || "MISSING"}`);
 
-  if (!authHeader || !authHeader.startsWith("Bearer")) {
+  // 1. Check if auth header exists and starts with "Bearer"
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    console.warn("⚠️ [Auth Error]: Missing or malformed Authorization header.");
     return res.status(401).json({ msg: "Unauthorized" });
   }
 
-  // ["Bearer", "xjasasdhsagdydsav"]
-
+  // 2. Extract token
   const token = authHeader.split(" ")[1];
 
   if (!token) {
+    console.warn("⚠️ [Auth Error]: Bearer token was expected but not found.");
     return res.status(401).json({ msg: "Unauthorized" });
   }
-  // console.log(token,"token 45");
 
+  // 3. Verify token
   try {
+    // Truncating token in logs for security & readability
+    console.log(`🔑 [Auth]: Verifying token (${token.substring(0, 10)}...)`); 
+    
     const { payload } = await jwtVerify(token, JWKS);
-    req.user = payload;
-    // console.log(payload);
+    
+    console.log("✅ [Auth Success]: Token verified successfully.");
+    console.log("👤 [Auth Payload]:", JSON.stringify(payload, null, 2));
 
+    req.user = payload;
     next();
   } catch (error) {
-    // console.log(error);
+    console.error("❌ [Auth Error]: JWT Verification Failed.");
+    console.error(`Reason: ${error.message}`); // Prints expired, invalid signature, etc.
+    
     return res.status(401).json({ msg: "Unauthorized" });
   }
 };
@@ -345,7 +360,7 @@ const verifyToken = async (req, res, next) => {
     // ==========================================
 
     // ১. [CREATE] ক্লায়েন্ট যখন কোনো লইয়ারকে হায়ার করার রিকোয়েস্ট পাঠাবে
-    app.post("/hirings", verifyToken, async (req, res) => {
+    app.post("/hirings",verifyToken,  async (req, res) => {
       try {
         const hiringRequest = req.body;
         const result = await hiringsCollection.insertOne(hiringRequest);
@@ -408,34 +423,55 @@ const verifyToken = async (req, res, next) => {
     });
 
     // ৩. [UPDATE] লইয়ার রিকোয়েস্ট Accept বা Reject করলে স্ট্যাটাস আপডেট করার API
-    app.patch("/hirings/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { status } = req.body;
+  app.patch("/hirings/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status, lawyerEmail } = req.body; 
 
-        if (!ObjectId.isValid(id)) {
-          return res.status(400).send({ message: "Invalid Request ID format" });
-        }
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({ message: "Invalid Request ID format" });
+    }
 
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $set: { status: status },
-        };
+    // ১. হিয়ারিং রিকোয়েস্টের স্ট্যাটাস আপডেট
+    const filter = { _id: new ObjectId(id) };
+    const updateDoc = {
+      $set: { status: status },
+    };
+    const result = await hiringsCollection.updateOne(filter, updateDoc);
 
-        const result = await hiringsCollection.updateOne(filter, updateDoc);
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: "Failed to update status", error });
-      }
-    });
+    // ২. লয়ারের স্ট্যাটাস 'Busy' করা
+    if (status === "Accepted" && lawyerEmail) {
+      
+      // 💡 এখানে 'email' এবং 'lawyerEmail' দুটির যেকোনো একটি ম্যাচ করানোর জন্য $or ব্যবহার করা হলো
+      // এতে আপনার ডেটাবেজে ফিল্ডের নাম 'email' বা 'lawyerEmail' যাই থাকুক না কেন, লয়ার ১০০% আপডেট হবে।
+      const lawyerFilter = {
+        $or: [
+          { email: lawyerEmail },
+          { lawyerEmail: lawyerEmail }
+        ]
+      };
 
+      const updateLawyerDoc = {
+        $set: { status: "Busy" }
+      };
+      
+      // নিশ্চিত হয়ে নিন lawyersCollection ভেরিয়েবল নামটি আপনার প্রজেক্টের সাথে মিলছে কিনা
+      await lawyersCollection.updateOne(lawyerFilter, updateLawyerDoc); 
+    }
+
+    res.send(result);
+  } catch (error) {
+    console.error("Error in patch API:", error);
+    res.status(500).send({ message: "Failed to update status", error });
+  }
+});
     // ১. নির্দিষ্ট ইউজারের সব কমেন্ট গেট (GET) করা
     // ==========================================
     // 💬 COMMENTS MANAGEMENT API
     // ==========================================
 
     // ➕ [নতুন সংযোজন ১] কমেন্ট পোস্ট করার মেইন API (POST)
-    app.post("/comments", async (req, res) => {
+    app.post("/comments",verifyToken, async (req, res) => {
       try {
         const commentData = req.body;
         const result = await commentsCollection.insertOne(commentData);
@@ -532,17 +568,32 @@ const verifyToken = async (req, res, next) => {
     });
 
     // ৪. সব ট্রানজেকশন গেট করা
-    app.get("/all-transactions", async (req, res) => {
-      try {
-        const result = await paymentsCollection
-          .find({})
-          .sort({ _id: -1 })
-          .toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: "Failed to fetch transactions" });
+   // ৪. সব ট্রানজেকশন গেট করা (Admin, User, Lawyer সবার জন্য ফিল্টারিং সাপোর্টসহ)
+app.get("/all-transactions", async (req, res) => {
+  try {
+    const { email, role } = req.query;
+    let query = {};
+
+    // 💡 যদি ফ্রন্টএন্ড থেকে ইমেইল এবং রোল পাঠানো হয়, তবে ফিল্টার হবে
+    if (email && role) {
+      if (role === "user") {
+        query = { clientEmail: email }; // ইউজারের করা পেমেন্ট
+      } else if (role === "lawyer") {
+        query = { lawyerEmail: email }; // লইয়ারের পাওয়া ইনকাম বা পেমেন্ট
       }
-    });
+    }
+    // রোল বা ইমেইল না থাকলে (যেমন অ্যাডমিন প্যানেল) অটোমেটিক সব ডেটা ({}) চলে যাবে
+
+    const result = await paymentsCollection
+      .find(query)
+      .sort({ _id: -1 })
+      .toArray();
+
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to fetch transactions" });
+  }
+});
 
     // ৫. অ্যানালিটিক্স ডাটা কাউন্ট করা (Dashboard Analytics)
     app.get("/admin-analytics", async (req, res) => {
@@ -582,38 +633,54 @@ const verifyToken = async (req, res, next) => {
           .send({ message: "Failed to fetch featured lawyers", error });
       }
     });
-
-    // 💳 Stripe Hosted Checkout Session API
+// 💳 Stripe Hosted Checkout Session API
     app.post("/api/checkout_sessions", async (req, res) => {
       try {
-        const { eventId, eventTitle, totalTicketPrice, email } = req.body;
+        // 💡 ১. ফ্রন্টএন্ড থেকে পাঠানো lawyerEmail এবং clientName-ও রিসিভ করুন
+        const { eventId, eventTitle, totalTicketPrice, email, lawyerEmail, clientName } = req.body;
 
-        // ১. স্ট্রাইপ সেশন প্যারামিটার তৈরি
+        // ২. স্ট্রাইপ সেশন প্যারামিটার তৈরি
         const session = await stripe.checkout.sessions.create({
           payment_method_types: ["card"],
           mode: "payment",
           customer_email: email,
-          // lawyerEmail: lawyerEmail,
 
           // পেমেন্ট সফল বা ক্যানসেল হলে ইউজার ফ্রন্টএন্ডের যে ইউআরএল-এ ব্যাক করবে
-          success_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history/success?session_id={CHECKOUT_SESSION_ID}&hiringId=${eventId}`,
-          cancel_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history/success?payment_cancel=true`,
+          success_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history?payment_success=true&hiringId=${eventId}`, 
+          cancel_url: `${process.env.BETTER_AUTH_URL}/dashbroad/user/hiring-history?payment_cancel=true`,
 
           line_items: [
             {
               price_data: {
                 currency: "usd",
                 product_data: {
-                  name: eventTitle, // যেমন: Lawyer Name বা Consultation Fee
+                  name: eventTitle || "Lawyer Consultation Fee", 
                 },
-                unit_amount: parseInt(totalTicketPrice * 100), // স্ট্রাইপ সেন্ট হিসেবে হিসাব করে (যেমন: $150 = 15000)
+                unit_amount: parseInt(totalTicketPrice * 100), 
               },
               quantity: 1,
             },
           ],
         });
 
-        // ২. ফ্রন্টএন্ডে স্ট্রাইপ পেজের ইউআরএল রিটার্ন করা
+        // 🌟 ৩. ডাটাবেজে সঠিক ডেটা দিয়ে পেমেন্ট ডকুমেন্ট তৈরি ও সেভ করা
+        const newPayment = {
+          hiringId: eventId,
+          sessionId: session.id,
+          clientEmail: email,
+          clientName: clientName || "Regular Client",
+          amount: parseFloat(totalTicketPrice), // 💡 আসল ডাইনামিক অ্যামাউন্ট
+          lawyerName: eventTitle || "Verified Professional", // 💡 আসল লইয়ারের নাম
+          lawyerEmail: lawyerEmail || "not_provided@mail.com", // 💡 লইয়ারের আসল ইমেইল
+          status: "Paid",
+          date: new Date().toISOString().split("T")[0], // 💡 কারেন্ট ডেট (YYYY-MM-DD)
+          createdAt: new Date()
+        };
+
+        // আপনার ডাটাবেজের কালেকশনে ইনসার্ট করুন
+        await paymentsCollection.insertOne(newPayment);
+
+        // ৪. ফ্রন্টএন্ডে স্ট্রাইপ পেজের ইউআরএল রিটার্ন করা
         res.json({ url: session.url });
       } catch (error) {
         console.error("Stripe Error:", error);
